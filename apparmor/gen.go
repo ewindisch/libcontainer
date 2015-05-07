@@ -8,6 +8,7 @@ import (
 
 type data struct {
 	Name         string
+	BinaryPath   string
 	Imports      []string
 	InnerImports []string
 }
@@ -16,6 +17,58 @@ const baseTemplate = `
 {{range $value := .Imports}}
 {{$value}}
 {{end}}
+
+profile {{.BinaryPath}} flags=(attach_disconnected) {
+  # Daemon requirements
+  signal,
+  ipc rw,
+  network,
+  capability,
+
+  mount -> /var/lib/docker/**,
+  mount -> /,
+  mount -> /proc/**,
+  mount -> /sys/**,
+  umount,
+  pivot_root,
+  /var/lib/docker/* rw,
+  /var/run/docker.sock rw,
+  /sbin/apparmor_parser rix,
+  /sbin/xtables-multi rix,
+  /sbin/iptables rix,
+  /sbin/modprobe rix,
+  /usr/bin/docker rix,
+  /sbin/auplink rix,
+  /usr/bin/xz rix,
+
+  deny /etc/** w,
+  owner /** rw,
+
+  # Transitions
+  change_profile -> {{.Name}},
+  change_profile -> unconfined,
+
+  profile /sbin/iptables {
+   capability net_admin,
+  }
+  profile /sbin/auplink {
+   capability net_admin,
+   capability net_raw,
+  }
+  profile /sbin/modprobe {
+   capability sys_module,
+   /lib/modules/*/** r,
+  }
+  profile /usr/bin/xz {
+  }
+
+  # Client requirements...
+  /var/run/docker.sock rw,
+  /proc/sys/net/core/somaxconn r,
+  /proc/sys/kernel/cap_last_cap r,
+  /run/docker.sock rw,
+  owner /** rw,
+}
 
 profile {{.Name}} flags=(attach_disconnected,mediate_deleted) {
 {{range $value := .InnerImports}}
@@ -90,7 +143,8 @@ func generateProfile(out io.Writer) error {
 		return err
 	}
 	data := &data{
-		Name: "docker-default",
+		Name:       "docker-default",
+		BinaryPath: "/usr/bin/docker",
 	}
 	if tunablesExists() {
 		data.Imports = append(data.Imports, "#include <tunables/global>")
